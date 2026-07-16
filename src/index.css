@@ -1,0 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+scroll-behavior: smooth;
+}
+
+body {
+background-color: #FAF8F5;
+color: #333333;
+font-family: 'Montserrat', sans-serif;
+overflow-x: hidden;
+}
+
+/* Premium smooth scrollbar styling */
+::-webkit-scrollbar {
+width: 8px;
+}
+::-webkit-scrollbar-track {
+background: #FAF8F5;
+}
+::-webkit-scrollbar-thumb {
+background: #836822;
+border-radius: 4px;
+}
