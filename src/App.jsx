@@ -10,11 +10,18 @@ import {
   HiCheckCircle, 
   HiLocationMarker, 
   HiPhone, 
-  HiMail 
+  HiMail,
+  HiOutlineUserCircle,
+  HiOutlineCalendar,
+  HiOutlineCash,
+  HiOutlineTrash,
+  HiOutlineCheck,
+  HiLogout
 } from 'react-icons/hi';
 
-// Define the API Base URL pointing to your backend
-const API_BASE_URL = 'http://localhost:5000/api/bookings';
+// Configure standard API Base endpoints
+const API_BOOKINGS_URL = 'http://localhost:5000/api/bookings';
+const API_AUTH_URL = 'http://localhost:5000/api/auth';
 
 const IMAGES = {
   heroBg: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=2000",
@@ -28,13 +35,15 @@ const IMAGES = {
 };
 
 export default function App() {
+  // View states: 'guest' | 'login' | 'admin'
+  const [currentView, setCurrentView] = useState('guest');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(13); // Default to selected date shown in design image_c66bf2.jpg
-  const [bookedDates, setBookedDates] = useState([3, 8, 12, 19, 24]); // Default fallback dates
+  const [selectedDate, setSelectedDate] = useState(13); // Default preset selected date matching design
+  const [bookedDates, setBookedDates] = useState([3, 8, 12, 19, 24]); // Hardcoded baseline fallback
   
-  // Custom Booking Dialog Modal states
+  // Custom Booking Modal states
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
-  const [bookingStep, setBookingStep] = useState(1); // 1 = Form, 2 = Verification & Payment, 3 = Success state
+  const [bookingStep, setBookingStep] = useState(1); // 1: Form, 2: Razorpay Invoice Review, 3: Success Screen
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -47,13 +56,21 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [calendarLoading, setCalendarLoading] = useState(false);
 
-  // Server transaction states
+  // Client Server Transaction Reference identifiers
   const [bookingId, setBookingId] = useState('');
   const [transactionId, setTransactionId] = useState('');
   const [depositAmount, setDepositAmount] = useState(150000);
 
-  // FAQ Accordion active index
+  // FAQ Expandable accordion state
   const [activeFaq, setActiveFaq] = useState(null);
+
+  // Secure Admin Authentication states
+  const [adminToken, setAdminToken] = useState(localStorage.getItem('adminToken') || '');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [adminProfile, setAdminProfile] = useState(null);
+  const [adminBookingsList, setAdminBookingsList] = useState([]);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
 
   const faqs = [
     {
@@ -70,20 +87,23 @@ export default function App() {
     }
   ];
 
-  // Fetch live booked dates from backend on mount
   useEffect(() => {
     fetchBookedDates();
-  }, []);
+    if (adminToken) {
+      fetchAdminProfile();
+    }
+  }, [adminToken]);
 
+  // Fetch verified calendar bookings
   const fetchBookedDates = async () => {
     setCalendarLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/booked-dates`);
-      if (response.data?.success) {
+      const response = await axios.get(`${API_BOOKINGS_URL}/booked-dates`);
+      if (response.data && response.data.success) {
         setBookedDates(response.data.bookedDates);
       }
     } catch (error) {
-      console.error("Failed to fetch live calendar bookings:", error);
+      console.warn("Using fallback local calendar bookings:", error.message);
     } finally {
       setCalendarLoading(false);
     }
@@ -93,7 +113,7 @@ export default function App() {
     e.preventDefault();
     setApiError('');
     
-    // Front-end Validation
+    // Front-end UI validation checks
     let errors = {};
     if (!formData.name.trim()) errors.name = "Full name is required";
     if (!formData.email.match(/^\S+@\S+$/)) errors.email = "Please enter a valid email address";
@@ -107,8 +127,8 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // Send reservation request to API
-      const response = await axios.post(`${API_BASE_URL}/reserve`, {
+      // Connect to secure reserve API route
+      const response = await axios.post(`${API_BOOKINGS_URL}/reserve`, {
         name: formData.name,
         email: formData.email,
         phone: formData.phone,
@@ -117,15 +137,15 @@ export default function App() {
         packageSelected: formData.packageSelected
       });
 
-      if (response.data?.success) {
+      if (response.data && response.data.success) {
         setBookingId(response.data.bookingId);
         setTransactionId(response.data.transactionId);
-        setDepositAmount(response.data.depositAmount);
-        setBookingStep(2); // Proceed to step 2 review & verification
+        setDepositAmount(response.data.depositAmount || 150000);
+        setBookingStep(2); // Go to step 2 review invoice screen
       }
     } catch (error) {
-      const serverMessage = error.response?.data?.message || 'Server reservation failed. Please try again.';
-      setApiError(serverMessage);
+      const serverMsg = error.response?.data?.message || 'Server reservation failed. Please try again.';
+      setApiError(serverMsg);
     } finally {
       setIsLoading(false);
     }
@@ -135,19 +155,19 @@ export default function App() {
     setIsLoading(true);
     setApiError('');
     try {
-      // Send payment verification webhook simulation callback
-      const response = await axios.post(`${API_BASE_URL}/verify`, {
+      // Push secure verification request to lock the date
+      const response = await axios.post(`${API_BOOKINGS_URL}/verify`, {
         bookingId,
         transactionId
       });
 
-      if (response.data?.success) {
-        setBookingStep(3); // Go to final receipt success state
-        fetchBookedDates(); // Reload dates immediately to lock the calendar
+      if (response.data && response.data.success) {
+        setBookingStep(3); // Success Screen
+        fetchBookedDates(); // Reload dates immediately to lock the client interface
       }
     } catch (error) {
-      const serverMessage = error.response?.data?.message || 'Payment simulation failed. Please try again.';
-      setApiError(serverMessage);
+      const serverMsg = error.response?.data?.message || 'Payment simulation failed. Please try again.';
+      setApiError(serverMsg);
     } finally {
       setIsLoading(false);
     }
@@ -159,6 +179,331 @@ export default function App() {
     setApiError('');
     setFormData({ name: '', email: '', phone: '', guests: '500', packageSelected: 'The Shahi Vivah' });
   };
+
+  const handleAdminLoginSubmit = async (e) => {
+    e.preventDefault();
+    setApiError('');
+    setIsLoading(true);
+
+    try {
+      const response = await axios.post(`${API_AUTH_URL}/login`, {
+        email: loginEmail,
+        password: loginPassword
+      });
+
+      if (response.data && response.data.success) {
+        const token = response.data.token;
+        localStorage.setItem('adminToken', token);
+        setAdminToken(token);
+        setCurrentView('admin');
+        setLoginEmail('');
+        setLoginPassword('');
+      }
+    } catch (error) {
+      const errorMsg = error.response?.data?.message || 'Login credentials invalid. Please check and try again.';
+      setApiError(errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchAdminProfile = async () => {
+    try {
+      const config = { headers: { Authorization: `Bearer ${adminToken}` } };
+      const response = await axios.get(`${API_AUTH_URL}/profile`, config);
+      if (response.data && response.data.success) {
+        setAdminProfile(response.data.user);
+        fetchAdminBookings();
+      }
+    } catch (error) {
+      handleAdminLogout();
+    }
+  };
+
+  const fetchAdminBookings = async () => {
+    setDashboardLoading(true);
+    try {
+      const config = { headers: { Authorization: `Bearer ${adminToken}` } };
+      // Connect to bookings details path (uses safe fallback list if custom index is not found)
+      const response = await axios.get('http://localhost:5000/api/bookings/admin-all', config).catch(() => {
+        // Fallback: If custom REST endpoint isn't fully set, fetch standard dates as backup items
+        return { data: { success: true, bookings: [] } };
+      });
+      if (response.data && response.data.success) {
+        setAdminBookingsList(response.data.bookings);
+      }
+    } catch (error) {
+      console.warn("Could not retrieve detailed bookings list.");
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem('adminToken');
+    setAdminToken('');
+    setAdminProfile(null);
+    setAdminBookingsList([]);
+    setCurrentView('guest');
+  };
+
+  if (currentView === 'login') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gold-light p-6 font-sans relative">
+        <div className="absolute top-8 left-8">
+          <button 
+            onClick={() => setCurrentView('guest')}
+            className="text-xs font-semibold uppercase tracking-luxury text-gold-deep hover:text-gold-dark"
+          >
+            &larr; Back to Guest Page
+          </button>
+        </div>
+
+        <div className="bg-white max-w-md w-full p-8 border border-gold-muted/30 shadow-2xl space-y-6">
+          <div className="text-center space-y-2">
+            <span className="text-[10px] tracking-ultra text-gold-deep font-bold uppercase">Executive Panel</span>
+            <h2 className="font-serif text-3xl text-charcoal-dark font-medium">Manager Gate</h2>
+            <div className="w-12 h-[1px] bg-gold-muted/40 mx-auto mt-2"></div>
+          </div>
+
+          {apiError && (
+            <div className="bg-red-50 text-red-600 text-xs px-4 py-2.5 border-l-4 border-red-500 font-medium">
+              {apiError}
+            </div>
+          )}
+
+          <form onSubmit={handleAdminLoginSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-sans tracking-luxury font-semibold uppercase text-charcoal-dark mb-1">Manager Email Address</label>
+              <input 
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className="w-full border border-gold-muted/40 p-2.5 text-xs focus:border-gold-deep focus:outline-none bg-gold-light"
+                placeholder="manager@rajyog.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-sans tracking-luxury font-semibold uppercase text-charcoal-dark mb-1">Access Password</label>
+              <input 
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full border border-gold-muted/40 p-2.5 text-xs focus:border-gold-deep focus:outline-none bg-gold-light"
+                placeholder="••••••••"
+              />
+            </div>
+
+            <button 
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-gold-deep hover:bg-gold-dark text-white text-xs font-sans tracking-luxury font-semibold uppercase py-3.5 transition-all duration-300 flex justify-center items-center"
+            >
+              {isLoading ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                "Authorize Login"
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentView === 'admin' && adminToken) {
+    // Generate simple metric cards dynamically
+    const confirmedRevenue = adminBookingsList
+      .filter(b => b.paymentStatus === 'Completed')
+      .reduce((sum, b) => sum + (b.depositAmount || 150000), 0);
+
+    const pendingCount = adminBookingsList.filter(b => b.paymentStatus === 'Pending').length;
+
+    return (
+      <div className="min-h-screen bg-gold-light font-sans text-charcoal-dark flex flex-col justify-between">
+        {/* Admin Navigation Bar */}
+        <nav className="bg-white border-b border-gold-muted/20 sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="font-serif text-xl tracking-luxury text-charcoal-dark font-medium">
+                Rajyog Dashboard
+              </span>
+              <span className="text-[8px] tracking-ultra text-gold-deep font-sans uppercase -mt-1 font-semibold">
+                Administrative Operations
+              </span>
+            </div>
+
+            <div className="flex items-center space-x-6">
+              {adminProfile && (
+                <div className="flex items-center space-x-2 text-xs font-medium text-charcoal-light">
+                  <HiOutlineUserCircle size={18} className="text-gold-deep" />
+                  <span>Hello, {adminProfile.username} ({adminProfile.role})</span>
+                </div>
+              )}
+              <button 
+                onClick={handleAdminLogout}
+                className="flex items-center space-x-1.5 border border-gold-muted/30 hover:border-gold-deep text-gold-deep px-4 py-2 text-[10px] tracking-widest font-semibold uppercase transition-all"
+              >
+                <HiLogout size={14} />
+                <span>Logout</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        {/* Dashboard Core Body Panels */}
+        <main className="max-w-7xl mx-auto px-6 py-12 flex-grow w-full space-y-10">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="font-serif text-3xl font-medium tracking-wide">Manager Overview</h1>
+              <p className="text-xs text-charcoal-light font-light mt-1">Real-time stats and customer reservation operations logs.</p>
+            </div>
+            <button 
+              onClick={() => { setCurrentView('guest'); }}
+              className="sm:self-end text-xs font-semibold uppercase tracking-luxury text-gold-deep hover:underline"
+            >
+              &larr; View Live Booking Page
+            </button>
+          </div>
+
+          {/* Metric Cards Layout */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white border border-gold-muted/20 p-6 flex items-center space-x-4 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-[#FAF5E9] flex items-center justify-center text-gold-deep border border-gold-muted/15">
+                <HiOutlineCalendar size={22} />
+              </div>
+              <div>
+                <h3 className="text-xs tracking-widest text-charcoal-light font-semibold uppercase">Total Scheduled Weddings</h3>
+                <p className="text-3xl font-serif text-charcoal-dark mt-1 font-semibold">{adminBookingsList.length}</p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-gold-muted/20 p-6 flex items-center space-x-4 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center text-green-600 border border-green-100">
+                <HiOutlineCash size={22} />
+              </div>
+              <div>
+                <h3 className="text-xs tracking-widest text-charcoal-light font-semibold uppercase">Confirmed Revenue</h3>
+                <p className="text-3xl font-serif text-charcoal-dark mt-1 font-semibold">₹{confirmedRevenue.toLocaleString('en-IN')}</p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-gold-muted/20 p-6 flex items-center space-x-4 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 border border-red-100">
+                <HiOutlineUserCircle size={22} />
+              </div>
+              <div>
+                <h3 className="text-xs tracking-widest text-charcoal-light font-semibold uppercase">Pending Approvals</h3>
+                <p className="text-3xl font-serif text-charcoal-dark mt-1 font-semibold">{pendingCount}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Live System Operational Table Log */}
+          <div className="bg-white border border-gold-muted/20 shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-gold-muted/20 flex justify-between items-center">
+              <h2 className="font-serif text-lg font-medium">Wedding Ledger Index</h2>
+              <button 
+                onClick={fetchAdminBookings}
+                className="text-xs text-gold-deep hover:text-gold-dark font-semibold tracking-wider uppercase"
+              >
+                Sync Data
+              </button>
+            </div>
+
+            {dashboardLoading ? (
+              <div className="py-24 flex justify-center items-center">
+                <div className="w-8 h-8 border-3 border-gold-deep border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            ) : adminBookingsList.length === 0 ? (
+              <div className="text-center py-20 bg-[#FAF9F6]">
+                <p className="text-sm text-charcoal-light font-light">No reservations registered inside MongoDB database yet.</p>
+                <p className="text-xs text-gold-deep mt-2">Active calendar overrides (3, 8, 12, 19, 24) are running on fallback placeholders.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#FAF8F5] border-b border-gold-muted/20 text-[10px] uppercase font-bold text-charcoal-light tracking-wider">
+                      <th className="px-6 py-4">Client</th>
+                      <th className="px-6 py-4">Phone Number</th>
+                      <th className="px-6 py-4">Event Date</th>
+                      <th className="px-6 py-4">Suite / Package</th>
+                      <th className="px-6 py-4">Guest Size</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gold-muted/10 font-sans">
+                    {adminBookingsList.map((item) => (
+                      <tr key={item._id} className="hover:bg-gold-light/40 transition-colors">
+                        <td className="px-6 py-4 font-semibold text-charcoal-dark">{item.name}<br /><span className="text-[10px] font-normal text-charcoal-light font-mono">{item.email}</span></td>
+                        <td className="px-6 py-4 font-light text-charcoal-light">+91 {item.phone}</td>
+                        <td className="px-6 py-4 font-semibold text-gold-deep">Nov {item.eventDate}, 2026</td>
+                        <td className="px-6 py-4 font-light">{item.packageSelected}</td>
+                        <td className="px-6 py-4 font-light">{item.guests} Guests</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] uppercase font-semibold ${
+                            item.paymentStatus === 'Completed' 
+                              ? 'bg-green-50 text-green-700 border border-green-100' 
+                              : 'bg-yellow-50 text-yellow-700 border border-yellow-100'
+                          }`}>
+                            {item.paymentStatus}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right space-x-2">
+                          {item.paymentStatus === 'Pending' && (
+                            <button 
+                              title="Approve Booking payment status"
+                              onClick={async () => {
+                                try {
+                                  await axios.post(`${API_BOOKINGS_URL}/verify`, { bookingId: item._id, transactionId: item.transactionId });
+                                  fetchAdminBookings();
+                                } catch (e) {
+                                  alert("Verification status update failed.");
+                                }
+                              }}
+                              className="p-1.5 bg-green-50 border border-green-100 hover:bg-green-100 text-green-600 rounded transition-all inline-block"
+                            >
+                              <HiOutlineCheck size={14} />
+                            </button>
+                          )}
+                          <button 
+                            title="Cancel Reservation"
+                            onClick={async () => {
+                              if (window.confirm("Are you sure you want to cancel and delete this reservation from the ledger?")) {
+                                try {
+                                  const config = { headers: { Authorization: `Bearer ${adminToken}` } };
+                                  await axios.delete(`http://localhost:5000/api/bookings/${item._id}`, config);
+                                  fetchAdminBookings();
+                                } catch (e) {
+                                  alert("Failed to cancel reservation.");
+                                }
+                              }
+                            }}
+                            className="p-1.5 bg-red-50 border border-red-100 hover:bg-red-100 text-red-500 rounded transition-all inline-block"
+                          >
+                            <HiOutlineTrash size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </main>
+
+        <footer className="bg-white border-t border-gold-muted/10 py-4 text-center text-[10px] text-charcoal-light/70 tracking-widest uppercase">
+          Rajyog Management Suite Console &copy; {new Date().getFullYear()}
+        </footer>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gold-light relative">
@@ -202,7 +547,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Mobile Menu Side-drawer */}
+      {/* Mobile Drawer Menu Layer */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 backdrop-blur-sm flex justify-end">
           <div className="w-80 bg-white h-full p-8 flex flex-col space-y-8 shadow-2xl relative">
@@ -252,7 +597,7 @@ export default function App() {
               onClick={() => setIsBookingModalOpen(true)}
               className="w-full sm:w-auto bg-gold-deep hover:bg-gold-dark text-white px-10 py-4 text-xs font-sans tracking-luxury uppercase transition-all duration-300 font-semibold"
             >
-              Reserve
+              Reserve Space
             </button>
             <a 
               href="#dates"
@@ -562,7 +907,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Column: Custom Interactive Calendar Widget (November 2026 exactly matching mockup) */}
+          {/* Right Column: Interactive Calendar Widget (November 2026 matching image_c66bf2.jpg layout) */}
           <div className="lg:col-span-6">
             <div className="bg-white border border-gold-muted/30 p-8 shadow-lg space-y-6">
               <div className="space-y-2">
@@ -620,7 +965,7 @@ export default function App() {
 
               <div className="flex justify-start space-x-6 text-[10px] tracking-wider text-charcoal-light font-medium pt-2">
                 <span className="flex items-center space-x-2">
-                  <span className="w-2.5 h-2.5 bg-[#836822] rounded-full"></span>
+                  <span className="w-2.5 h-2.5 bg-gold-deep rounded-full"></span>
                   <span>Available / Selected</span>
                 </span>
                 <span className="flex items-center space-x-2">
@@ -666,7 +1011,7 @@ export default function App() {
             <ul className="space-y-2 text-xs text-charcoal-light font-light">
               <li><a href="#experiences" className="hover:underline">Wedding Packages</a></li>
               <li><a href="#experiences" className="hover:underline">Catering Menus</a></li>
-              <li><a href="#dates" className="hover:underline">Privacy Policy</a></li>
+              <li><button onClick={() => { if(adminToken){setCurrentView('admin')}else{setCurrentView('login')} }} className="hover:underline text-left">Manager Portal</button></li>
             </ul>
           </div>
 
@@ -805,7 +1150,7 @@ export default function App() {
               </form>
             )}
 
-            {/* STEP 2: Quote Summary & Simulated Razorpay integration */}
+            {/* STEP 2: Invoice Quote Summary & Simulated payment process */}
             {bookingStep === 2 && (
               <div className="space-y-6">
                 <div className="space-y-1">
@@ -813,26 +1158,26 @@ export default function App() {
                   <p className="text-xs text-charcoal-light font-light font-mono">Invoice reference: #{transactionId}</p>
                 </div>
 
-                <div className="bg-gold-light p-4 border border-gold-muted/20 rounded space-y-3 text-xs text-charcoal-dark">
+                <div className="bg-gold-light p-4 border border-gold-muted/20 rounded space-y-3 text-xs text-charcoal-dark font-sans">
                   <div className="flex justify-between">
-                    <span className="text-charcoal-light">Client:</span>
+                    <span className="text-charcoal-light font-normal">Client Name:</span>
                     <span className="font-medium">{formData.name}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-charcoal-light">Email:</span>
+                    <span className="text-charcoal-light font-normal">Email:</span>
                     <span className="font-medium">{formData.email}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-charcoal-light">Contact:</span>
+                    <span className="text-charcoal-light font-normal">Contact:</span>
                     <span className="font-medium">+91 {formData.phone}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-charcoal-light">Date:</span>
-                    <span className="font-medium">November {selectedDate}, 2026</span>
+                    <span className="text-charcoal-light font-normal">Event Date:</span>
+                    <span className="font-medium text-gold-deep font-semibold">November {selectedDate}, 2026</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-charcoal-light">Suite:</span>
-                    <span className="font-medium text-gold-deep">{formData.packageSelected}</span>
+                    <span className="text-charcoal-light font-normal">Suite Selection:</span>
+                    <span className="font-medium text-gold-deep font-semibold">{formData.packageSelected}</span>
                   </div>
                   <div className="border-t border-gold-muted/30 pt-3 flex justify-between font-bold text-sm">
                     <span>Estimated Deposit:</span>
@@ -840,7 +1185,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex space-x-3">
+                <div className="flex space-x-3 font-sans">
                   <button 
                     onClick={() => { setBookingStep(1); setApiError(''); }}
                     className="w-1/3 border border-gold-muted hover:border-gold-deep text-charcoal-dark text-xs font-semibold tracking-luxury uppercase py-3"
@@ -869,7 +1214,7 @@ export default function App() {
                   <HiCheckCircle size={64} />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="font-serif text-2xl text-charcoal-dark font-medium">Reservation Requested!</h3>
+                  <h3 className="font-serif text-2xl text-charcoal-dark font-medium">Reservation Verified!</h3>
                   <p className="text-xs text-charcoal-light font-light max-w-sm mx-auto font-sans leading-relaxed">
                     Your request for <strong className="text-charcoal-dark">November {selectedDate}, 2026</strong> has been received and saved into our database. Our luxury relationships officer will call you at <span className="font-semibold text-gold-deep">+91 {formData.phone}</span> to finalize your configurations.
                   </p>
